@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en-US">
+    <head>
+        <title>To Do</title>
+        <meta charset="utf-8">
+        <link rel="icon" href="images/to-do-list.png" type="image/png">
+        <link rel="stylesheet" href="main_tasks_style.css">
+        <link rel="script" href="functionality.js">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="keywords" content="tasks todo">
+        <meta name="description" content="To Do app">  
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.20.1/moment.min.js"></script>
+
+
+    </head>
+    <body>
+        <header>
+            <h1>To Do</h1>
+            <div class="float-right">
+                <span>Time left: </span><span id="time_left_span"></span><span> hours</span><br>
+                <!--<span>Time saved: </span><span id="time_saved_span"></span><span> minutes</span><br>-->
+                <span>Time taken: </span><span id="time_completed_span"></span><span> hours</span><br>
+                <span>Task time completed: </span><span id="task_time_completed_span"></span><span> hours</span><br>
+                <span>Time saved rolling: </span><span id="time_saved_moving_span"></span><span> hours</span><br>
+                <span>Deadlines missed: </span><span id="deadlines_missed_span"></span><br>
+                <span>Deadlines achieved: </span><span id="deadlines_achieved_span"></span><br>
+                <span>Last reset: </span><span id="last_reset_span"></span><br>
+                <a href="http://localhost:8000/completed.html">Completed</a><br>
+                <a href="http://localhost:8000/projects.html">Projects</a>
+            </div>  
+        </header>
+        <nav></nav>
+        <main>
+            <div id="tasks-div">
+                <table id="tasks-table">
+                    <tr>
+                        <th>Name</th>
+                        <th>Duration</th>
+                        <th style="display:none">Priority</th>
+                        <th>Deadline</th>
+                        <th id="start-header">Start</th>
+                        <th>Timer</th>
+                    </tr>
+                <!--<tr><td>Clean kitchen</td><td>30m</td><td>Low</td><td>This week</td></tr>
+                    <tr><td>Clean room</td><td>2h</td><td>Low</td><td>This week</td></tr>
+                    <tr><td>Laundry</td><td>15m</td><td>Medium</td><td>Today</td></tr>
+                    <tr><td>Filter emails</td><td>15m</td><td>High</td><td>Next few hours</td></tr>-->
+                    
+                </table>
+            </div>
+        </main>
+        <footer>
+            Reset time saved: <button onclick="reset_time_saved()" id="reset-button">Reset</button>
+        </footer>
+        <script>
+            let deadlinesMissedStr = (localStorage.getItem("deadlinesMissed")) || "";
+
+            deadlinesMissedArr = deadlinesMissedStr.split(',');
+            let deadlinesMissedSet = new Set();
+            for (deadlineMissedIndex of deadlinesMissedArr) {
+                deadlinesMissedSet.add(deadlineMissedIndex);
+            }
+
+            let lastIndex = (localStorage.getItem("lastIndex")) || 0;
+            let timeSaved = (localStorage.getItem("timeSaved")) || 0;
+            let deadlinesAchieved = (localStorage.getItem("deadlinesAchieved")) || 0;
+            let timeSavedMoving = (localStorage.getItem("timeSavedMoving")) || 0;
+            let lastTimeForSavedMovingStr = (localStorage.getItem("timeSavedMovingLastTime")) || moment().toISOString();
+            let lastTimeForSavedMoving = moment(Date.parse(lastTimeForSavedMovingStr));
+            let timeCompleted = (localStorage.getItem("timeCompleted")) || 0;
+            let taskTimeCompleted = (localStorage.getItem("taskTimeCompleted")) || 0;
+            let lastResetStr = (localStorage.getItem("lastReset")) || moment().toISOString();
+            let lastReset = moment(Date.parse(lastResetStr));
+            lastIndex = parseInt(lastIndex);
+            timeSaved = parseFloat(timeSaved);
+            timeSavedMoving = parseFloat(timeSavedMoving);
+            timeCompleted = parseFloat(timeCompleted);
+            taskTimeCompleted = parseFloat(taskTimeCompleted);
+            deadlinesAchieved = parseInt(deadlinesAchieved);
+
+            //document.getElementById("time_saved_span").textContent = timeSaved.toFixed(1);
+            document.getElementById("time_saved_moving_span").textContent = (timeSavedMoving/60).toFixed(1);
+            document.getElementById("time_completed_span").textContent = (timeCompleted/60).toFixed(1);
+            document.getElementById("task_time_completed_span").textContent = (taskTimeCompleted/60).toFixed(1);
+            document.getElementById("deadlines_missed_span").textContent = deadlinesMissedSet.size - 1;
+            document.getElementById("deadlines_achieved_span").textContent = deadlinesAchieved;
+            document.getElementById("last_reset_span").textContent = lastReset.fromNow();
+            tasks = []
+            priority_dict = {"high": 3, "medium": 2, "low": 1};
+
+            const CHANGE_DEADLINE_INPUT_ID = "change_deadline_input";
+            const CHANGE_DEADLINE_DROPDOWN_ID = "change_deadline_dropdown";
+            const DISPLAY_TASK_NAME_ID = "display_task_name";
+            const DISPLAY_DURATION_ID = "display_duration";
+            const DISPLAY_PRIORITY_ID = "display_priority";
+            const DISPLAY_DEADLINE_ID = "display_deadline";
+            const DISPLAY_START_ID = "display_start_time";
+            const STARTING_TIME_STR_FORMAT = "h:mma ddd D";
+            const STARTING_TIME_STR_FORMAT_IN_FUTURE = "ddd D";
+            const PADDING_MINUTES_TO_DEADLINE = 2;
+            let global_timer = null;
+            // Sleep time
+            let work_stops = moment("10:00pm", "h:mma");
+            let work_starts = moment("7:15am", "h:mma");
+            let midnight = moment("0:00", "h:mm");
+            let non_work_time = work_starts - midnight;
+            midnight.add(1, "days");
+            non_work_time += midnight - work_stops;
+
+            const DEADLINE_DROPDOWN_HTML = `<select id="deadline-dropdown" name="priority">
+                        <option value="None">None</option>
+                        <option value="Now">Now</option>
+                        <option value="ASAP">ASAP</option>
+                        <option value="Few hours">Few hours</option>
+                        <option value="Half day">Half day</option>
+                        <!--<option value="Day">Day</option>-->
+                        <option value="Today">Today</option>
+                        <option value="Tomorrow">Tomorrow</option>
+                        <option value="Third day">Third day</option>
+                        <option value="Forth day">Forth day</option>
+                        <!--<option value="Few days">Few days</option>-->
+                        <option value="Week">Week</option>
+                    </select>`;
+            
+            const CHANGE_DEADLINE_DROPDOWN_HTML = `<select id="${CHANGE_DEADLINE_DROPDOWN_ID}" name="priority">
+                <option value="None">None</option>
+                <option value="Now">Now</option>
+                <option value="ASAP">ASAP</option>
+                <option value="Few hours">Few hours</option>
+                <option value="Half day">Half day</option>
+                <!--<option value="Day">Day</option>-->
+                <option value="Today">Today</option>
+                <option value="Tomorrow">Tomorrow</option>
+                <option value="Third day">Third day</option>
+                <option value="Forth day">Forth day</option>
+                <!--<option value="Few days">Few days</option>-->
+                <option value="Week">Week</option>
+            </select>`;
+
+            function reset_time_saved() {
+                localStorage.setItem("timeSaved", 0);
+                localStorage.setItem("timeSavedMoving", 0);
+                localStorage.setItem("timeSavedMovingLastTime", moment().toISOString())
+                localStorage.setItem("timeCompleted", 0);
+                localStorage.setItem("taskTimeCompleted", 0);
+                localStorage.setItem("lastReset", moment().toISOString());
+                localStorage.removeItem("finishedTasks");
+                localStorage.removeItem("finishedTasksNum");
+                localStorage.removeItem("deadlinesAchieved");
+                localStorage.removeItem("deadlinesMissed");
+            }
+
+            function prioritize_tasks() {
+                // If there's anything short and the deadline is today, we'll start off with that (in the appropriate order).
+                // then if possible, we'll add in the others by priority 
+                // then we'll start 
+            }
+
+            function get_deadline_iso_str_from_dropdown_val(dropdown_val) {
+                if (dropdown_val == "None") return "";
+
+                
+                deadline_str = dropdown_val;
+                deadline = moment();
+                // deadline.add(1, "hours");
+                if (deadline_str == "Now") {
+                    deadline.add(30, "minutes");
+                } else if (deadline_str == "ASAP") {
+                    deadline.add(90, "minutes");
+                } else if (deadline_str == "Few hours") {
+                    deadline.add(4.5, "hours");
+                } else if (deadline_str == "Half day") {
+                    deadline.add(12, "hours");
+                } else if (deadline_str == "Today") {
+                    deadline = work_stops; //deadline.endOf("day");
+                } else if (deadline_str == "Tomorrow") {
+                    deadline = deadline.endOf("day");
+                    deadline.add(1, "days");
+                } else if (deadline_str == "Third day") {
+                    deadline = deadline.endOf("day");
+                    deadline.add(2, "days");
+                } else if (deadline_str == "Forth day") {
+                    deadline = deadline.endOf("day");
+                    deadline.add(3, "days");
+                } 
+                /*}  else if (deadline_str == "Day") {
+                    deadline.add(24, "hours");
+                }
+                else if (deadline_str == "Few days") {
+                    deadline.add(3, "days");
+                }*/ else if (deadline_str == "Week") {
+                    deadline.add(7, "days");
+                } 
+
+                if (deadline - moment() > (1000 * 60 * 60 * 12)) {
+                    let third = prompt("Which third of day? (1-3):", "3");
+                    if (third == null || third == "") {
+                        //text = "User cancelled the prompt.";
+                    } else {
+                        let num = parseInt(third);
+                        num = 3 - num;
+                        deadline.add(-1 * 5 * num, "hours");
+                    }
+                }
+
+                deadline = deadline.toISOString();
+                return deadline;
+            }
+
+            function add_task() {
+
+                console.info("Adding task.")
+
+                task_name = document.getElementById("task-name-input").value;
+                duration = document.getElementById("duration-input").value;
+                priority = document.getElementById("priority-input").value;
+                //deadline = document.getElementById("deadline-input").value;
+                deadline_str = document.getElementById("deadline-dropdown").value;
+
+                /*if (deadline_time < time_now) {
+                            deadline_dropdown_str = "Past";
+                        } else if (deadline_time.subtract(30, "minutes") < time_now) {
+                            deadline_dropdown_str = "Now";
+                        } else if (deadline_time.subtract(1, "hours") < time_now) {
+                            deadline_dropdown_str = "ASAP";
+                        } else if (deadline_time.subtract(3, "hours") < time_now) {
+                            deadline_dropdown_str = "Few hours";
+                        } else if (deadline_time.subtract(19.5, "hours") < time_now) {
+                            deadline_dropdown_str = "Day";
+                        } else if (deadline_time.subtract(2, "days") < time_now) {
+                            deadline_dropdown_str = "Few days";
+                        } else if (deadline_time.subtract(4, "days") < time_now) {
+                            deadline_dropdown_str = "Week";
+                }*/
+                
+                if (!(task_name) || !(duration) || !(priority)) {
+                    console.info("Task not added: Misssing info.")
+                    return
+                }
+
+                deadline = get_deadline_iso_str_from_dropdown_val(deadline_str);
+
+                task = {"task_name": task_name, "duration": duration, "priority": priority,
+                        "deadline": deadline, "task_order": -1 * lastIndex};
+
+                localStorage.setItem(lastIndex, JSON.stringify(task));
+                localStorage.setItem("lastIndex", (lastIndex + 1));
+                console.info("Task added.")
+                window.location.reload();
+
+            }
+
+            function update_tasks() {
+                console.info("Updating task.");
+
+                change_deadline_input = document.getElementById(CHANGE_DEADLINE_INPUT_ID);
+                row = change_deadline_input.closest("tr");
+                task_name = row.querySelector("#" + DISPLAY_TASK_NAME_ID).textContent;
+
+                
+                for (let task of tasks) {
+                    if (task.task_name == task_name) {
+                        task_info_str = localStorage.getItem(task.index);
+                        old_task = JSON.parse(task_info_str);
+                        old_task.deadline = change_deadline_input.value;
+                        localStorage.setItem(task.index, JSON.stringify(old_task));
+                        change_deadline_input.closest("td").innerHTML = change_deadline_input.value;
+                        row.classList.add('just-changed-deadline');
+                        //window.location.reload();
+                    }
+                }
+            }
+
+            function update_tasks_with_dropdown() {
+                console.info("Updating task using dropdown.");
+
+                change_deadline_input = document.getElementById(CHANGE_DEADLINE_DROPDOWN_ID);
+                row = change_deadline_input.closest("tr");
+                task_index = parseInt(row.getAttribute("data-task-id-number"));
+                
+                task_info_str = localStorage.getItem(task_index);
+                old_task = JSON.parse(task_info_str);
+                old_task.deadline = get_deadline_iso_str_from_dropdown_val(change_deadline_input.value);
+                localStorage.setItem(task_index, JSON.stringify(old_task));
+                change_deadline_input.closest("td").innerHTML = change_deadline_input.value;
+                row.classList.add('just-changed-deadline');
+            }
+
+            function get_tasks() {
+                let tasks = [];
+                for (let i = 0; i < lastIndex; i++) {
+                    if (localStorage.getItem(i)) {
+                        task = JSON.parse(localStorage.getItem(i));
+                        task["index"] = i;
+                        tasks.push(task);
+                    }
+                }
+                //console.log(tasks);
+                return tasks;
+            }
+
+            function display_tasks() {
+
+                tableElement = document.getElementById("tasks-table");
+                lastRow = document.createElement("tr");
+                const now = new Date();
+                const nowString = now.toISOString().slice(0, 16)
+
+                
+
+                lastRow.innerHTML = `
+                    <tr>
+                        <td>
+                            <input type="text"  id="task-name-input" placeholder="Task name" autofocus>
+                        </td>
+                        <td>
+                            <!--<span id="duration-span">--><input type="number" id="duration-input" min="3" max="999" placeholder="Duration in minutes"><!-- max="600"> mins</span>-->
+                        </td>
+                        <td style="display:none">
+                            <select id="priority-input" name="priority">
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                            </select>
+                        </td>
+                        <td>
+                            <!--<input type="datetime-local" id="deadline-input" name="deadline">-->
+                            ${DEADLINE_DROPDOWN_HTML}
+                        </td>
+                        <td>
+                        </td>
+                    </tr>`;
+                tableElement.appendChild(lastRow);
+
+                cur_time = moment();
+                time_now = moment();
+                // time_now.add(1, "hours");
+
+                for (let task of tasks) {
+                
+                    newRow = document.createElement("tr");
+                    newRow.draggable = true;
+                    newRow.id = "row" + task.index;
+                    newRow.setAttribute("data-task-id-number", task.index);
+
+                    starting_time = cur_time.clone();
+
+   
+                    cur_time.add(parseInt(task.duration),'minutes');
+
+                    let cur_only_time = moment(cur_time.format("h:mma"), "h:mma");
+
+
+
+
+
+                    if (cur_only_time.isAfter(work_stops) || cur_only_time.isBefore(work_starts)) {
+
+                        cur_time.add(non_work_time);
+                    }
+
+                    starting_time_str = starting_time.format(STARTING_TIME_STR_FORMAT);
+
+                    if (starting_time - time_now > (1000 * 60 * 60 * 24 * 1.5)) {
+                        starting_time_str = starting_time.format(STARTING_TIME_STR_FORMAT_IN_FUTURE);
+                    }
+
+                    cur_time_str = cur_time.format(STARTING_TIME_STR_FORMAT);
+                    deadline_str = "";
+                    let deadline_dropdown_str = "";
+                    if (task.deadline != null && task.deadline != "") {
+                        deadline_time = moment(Date.parse(task.deadline));
+                        deadline_time_fixed = deadline_time.clone();
+                        deadline_str = moment(Date.parse(task.deadline)).format("h:mma ddd Do");
+                        if (deadline_time < cur_time) {
+                            //console.log(task.task_name);
+                            newRow.classList.add("passed-due");
+                            if (deadline_time < moment()) {
+                                newRow.classList.add("deadline-in-past");
+                                deadlinesMissedSet.add(task.index);
+                            }
+                            
+                        } else if (deadline_time - cur_time < (1000 * 60 * 30)) {
+                            newRow.classList.remove("deadline-in-past");
+                            newRow.classList.remove("passed-due");
+                            newRow.classList.remove("too-much-time-left");
+                            newRow.classList.add("half-hour-left");
+                            newRow.classList.remove("hour-left");
+
+                        } else if (deadline_time - cur_time < (1000 * 60 * 60)) {
+                            newRow.classList.remove("deadline-in-past");
+                            newRow.classList.remove("passed-due");
+                            newRow.classList.remove("half-hour-left");
+                            newRow.classList.remove("too-much-time-left");
+                            newRow.classList.add("hour-left");
+
+                        } else if (deadline_time - cur_time > (1000 * 60 * 120)) {
+                            newRow.classList.remove("deadline-in-past");
+                            newRow.classList.remove("passed-due");
+                            newRow.classList.remove("half-hour-left");
+                            newRow.classList.remove("hour-left");
+                            newRow.classList.add("too-much-time-left");
+
+                        } else {
+                            newRow.classList.remove("deadline-in-past");
+                            newRow.classList.remove("passed-due");
+                            newRow.classList.remove("half-hour-left");
+                            newRow.classList.remove("hour-left");
+                            newRow.classList.remove("too-much-time-left");
+                        }
+                        
+                        /*if (deadline_time < time_now) {
+                            deadline_dropdown_str = "Past";
+                            deadline_dropdown_str = moment.duration(deadline_time_fixed - time_now).asMinutes().toFixed(2);
+                        } 
+                        else if (deadline_time.subtract(30, "minutes") < time_now) {
+                            // deadline_dropdown_str = "Now";
+                            deadline_dropdown_str
+                                = moment.duration(deadline_time_fixed - time_now).asMinutes().toFixed(2);
+                        } else if (newRow.classList.contains("passed-due")) {
+                            deadline_dropdown_str = deadline_time_fixed.format("hh:mm ddd");
+                        } else if (deadline_time.subtract(1, "hours") < time_now) {
+                            deadline_dropdown_str = "ASAP";
+                        } else if (deadline_time.subtract(3, "hours") < time_now) {
+                            deadline_dropdown_str = "Few hours";
+                        } else if (deadline_time.subtract(7.5, "hours") < time_now) {
+                            deadline_dropdown_str = "Half day";
+                        } else {
+                            deadline_dropdown_str = deadline_time_fixed.format("ddd Do");
+                        }*/
+
+                        deadline_dropdown_str = deadline_time.fromNow();
+
+                        
+                        
+                        /*else if (deadline_time.subtract(12, "hours") < time_now) {
+                            deadline_dropdown_str = "Day";
+                        } else if (deadline_time.subtract(2, "days") < time_now) {
+                            deadline_dropdown_str = "Few days";
+                        } else if (deadline_time.subtract(4, "days") < time_now) {
+                            deadline_dropdown_str = "Week";
+                        }*/
+                    }
+
+                    localStorage.setItem("deadlinesMissed",Array.from(deadlinesMissedSet).join(','));
+
+                    
+
+                    newRow.innerHTML = `<td id="${DISPLAY_TASK_NAME_ID}" onclick="maybe_delete(event)">${task.task_name}</td>
+                                        <td id="${DISPLAY_DURATION_ID}">${task.duration}m</td>
+                                        <!--<td id="${DISPLAY_PRIORITY_ID}">${task.priority}</td>-->
+                                        <td onclick="update_deadline_dropdown(event)">${deadline_dropdown_str}</td>
+                                        <!--<td id="${DISPLAY_DEADLINE_ID}" onclick="update_deadline(event)">${deadline_str}</td>-->
+                                        <td id="${DISPLAY_START_ID}">${starting_time_str}</td>
+                                        <td><button onclick="start_timer(event)">Start</button></td>`;
+                    tableElement.appendChild(newRow);
+
+                    newRow.addEventListener("drop", (event) => {
+                        console.log("row dropped");
+                        event.preventDefault();
+                        let draggedRowId = event.dataTransfer.getData("text");
+                        let targetRow = event.target.parentElement;
+                        let table = targetRow.parentElement;
+                        console.log(targetRow);
+                        //debugger;
+                        let draggedRow = document.getElementById(draggedRowId);
+                        targetRow.before(draggedRow);
+                        update_task_order();
+
+
+                    });
+                    newRow.addEventListener("dragover", (event) => {
+                        console.log("row drag over");
+                        event.preventDefault();
+                    });
+                    newRow.addEventListener("dragstart", (event) => {
+                        console.log("row drag start");
+                        event.dataTransfer.setData("text", event.target.closest("tr").id);
+                    });
+
+
+                }
+            }
+
+            function update_task_order() {
+                console.log("updating task order");
+                rows = document.querySelectorAll("tr[data-task-id-number]");
+                debugger;
+                let count = 0;
+                for (row of rows) {
+                    let index = row.getAttribute("data-task-id-number");
+                    task = JSON.parse(localStorage.getItem(index));
+                    task.task_order = count;
+                    localStorage.setItem(index, JSON.stringify(task));
+                    count++;
+                }
+                display_tasks();
+                window.location.reload();
+            }
+
+            function maybe_delete(event) {
+                should_delete = confirm(`Delete task?`);
+                if (should_delete) {
+                    let task_name_el = event.srcElement;
+                    let task_name_to_delete = task_name_el.textContent;
+                    for (let task of tasks) {
+                        if (task.task_name == task_name_to_delete) {
+                            //console.log(task.index);
+                            task_name_el.parentElement.remove();
+                            localStorage.removeItem(task.index);
+                            window.location.reload();
+                        }
+                    }
+                }
+            }
+
+            function _assess_overdue(tasks) {
+                cur_time = moment();
+
+                for (let task of tasks) {
+                    starting_time = cur_time.clone();
+
+                    cur_time.add(parseInt(task.duration),'minutes');
+                    if (cur_time.hour() > 24 || cur_time.hour() < 8) {
+                        cur_time.add(8, 'hours');
+                    }
+
+                    deadline_time = moment(Date.parse(task.deadline));
+                    if (deadline_time < cur_time) {
+                        task.overdue = true;
+                    } else {
+                        task.overdue = false;
+                    }
+                }
+            }
+
+            function finish_task(event) {
+                console.info("Finishing task.");
+                clearInterval(global_timer);
+                console.info("Stopped timer.");
+
+                time_taken = parseFloat(document.getElementById("timer-id").textContent);
+                let timer_td = event.srcElement;
+                let row = timer_td.closest("tr");
+                let duration_td = row.querySelector("#" + DISPLAY_DURATION_ID);
+                let duration_str = duration_td.textContent.slice(0, duration_td.textContent.length - 1);
+                let duration = parseFloat(duration_str);
+
+                timeSaved += duration - time_taken;
+
+                task_index = parseInt(row.getAttribute("data-task-id-number"));
+                task_info_str = localStorage.getItem(task_index);
+                task = JSON.parse(task_info_str);
+                deadline = moment(Date.parse(task.deadline));
+                if (moment() < deadline) {
+                    deadlinesAchieved++;
+                    localStorage.setItem("deadlinesAchieved", deadlinesAchieved);
+                }
+                
+                time_spent = moment() - lastTimeForSavedMoving;
+                if (lastTimeForSavedMoving < work_starts && moment() > work_starts) {
+                    time_spent -= non_work_time;
+                }
+                timeSavedMoving += (moment.duration(duration, 'minutes') - (time_spent)) / (1000 * 60);
+                timeCompleted += time_taken;
+                taskTimeCompleted += moment.duration(duration, 'minutes') / (1000 * 60);
+                let x = lastTimeForSavedMoving;
+                lastTimeForSavedMoving = moment();
+                localStorage.setItem("timeSaved", timeSaved);
+                localStorage.setItem("timeSavedMoving", timeSavedMoving);
+                localStorage.setItem("timeCompleted", timeCompleted);
+                localStorage.setItem("taskTimeCompleted", taskTimeCompleted);
+                localStorage.setItem("timeSavedMovingLastTime", lastTimeForSavedMoving.toISOString());
+                event.srcElement.style.display = "none";
+                let newFinishedTasksNum = parseInt(localStorage.getItem("finishedTasksNum") || 0) + 1;
+                localStorage.setItem("finishedTasksNum", newFinishedTasksNum);
+                localStorage.setItem("finishedTasks", `${(localStorage.getItem("finishedTasks") || "")}${x.format("h:mma ddd Do MMMM -")}\t\t ${newFinishedTasksNum}: ${task.task_name}\n`); 
+
+                let finishedTasksJson = JSON.parse((localStorage.getItem("finishedTasksJson") || "[]"));
+                finishedTasksJson.push({})
+            }
+
+            function start_timer(event) {
+                console.log("Start timer");
+                let time_started = moment();
+                //let seconds = moment.duration(0, 'minutes');
+                // seconds.add(-1, "hours");
+                let timerEl = event.srcElement.closest("td");
+                finish_button = `<button class="done-button" onclick="finish_task(event)">Stop</button>`;
+                timerEl.innerHTML = `<span id="timer-id">0.0m</span> ` + finish_button; //seconds.format("H:mm:ss");
+                let timerSpan = document.getElementById("timer-id");
+
+                global_timer = setInterval(function() {
+                    //seconds.add(1,"seconds");
+                    let time_now = moment();
+                    let diff = moment.duration(time_now - time_started, "ms");
+                    
+                    timerSpan.textContent = `${diff.asMinutes().toFixed(1)}m `; //seconds.format("H:mm:ss");
+                }, 1000);
+            }
+
+            function sort_tasks(tasks) {
+                for (let i = 0; i < 1; i++) {
+                    _assess_overdue(tasks);
+
+                    tasks.sort((a, b) => {
+                        if (a == b) return 0;
+                        if (a.priority == b.priority && a.deadline_time == b.deadline_time) return 0;
+
+                        if (!a.overdue && !b.overdue) {
+                            return Date.parse(a.deadline) - Date.parse(b.deadline);
+                        } else if (a.overdue ^ b.overdue) {
+                            if (a.overdue) return -1;
+                            return 1;
+                        } else {
+                            // both are overdue
+                            if (a.priority == b.priority) {
+                                return Date.parse(a.deadline) - Date.parse(b.deadline);
+                            }
+
+                            else return priority_dict[b.priority.toLowerCase()] - priority_dict[a.priority.toLowerCase()];
+                        }
+                    });
+                }
+            }
+
+
+            function update_deadline(event) {
+                //console.log(event);
+
+                let deadline_td = event.srcElement;
+                let row = deadline_td.closest("tr");
+                let starting_time_td = row.querySelector("#" + DISPLAY_START_ID);
+                let duration_td = row.querySelector("#" + DISPLAY_DURATION_ID);
+                let duration_str = duration_td.textContent.slice(0, duration_td.textContent.length - 1);
+                let duration = parseInt(duration_str);
+                let starting_time_str = starting_time_td.textContent;
+                let starting_time = moment(starting_time_str, STARTING_TIME_STR_FORMAT);
+                starting_time.add(duration, "minutes");
+                // starting_time.add(1, "hours");
+                starting_time.add(PADDING_MINUTES_TO_DEADLINE, "minutes");
+                const future_deadline_str = starting_time.toISOString().slice(0, 16);
+
+                // const now = new Date();
+                // let future_deadline = moment(now).add(5, "days");
+                // const future_deadline_str = future_deadline.toISOString().slice(0, 16);
+                // const nowString = now.toISOString().slice(0, 16);
+
+                event.srcElement.innerHTML = `<input type="datetime-local" 
+                                                id="${CHANGE_DEADLINE_INPUT_ID}" 
+                                                name="change-deadline" 
+                                                value="${future_deadline_str}"">`;
+
+            }
+
+            function update_deadline_dropdown(event) {
+                event.srcElement.innerHTML = CHANGE_DEADLINE_DROPDOWN_HTML;
+            }
+
+            function display_time_left() {
+                let total_duration = 0.0;
+                for (task of tasks) {
+                    total_duration += parseFloat(task.duration);
+                }
+                total_duration_hours = total_duration / 60;
+                document.getElementById("time_left_span").textContent = total_duration_hours.toFixed(1);
+            }
+
+            tasks = get_tasks();
+            tasks.sort((a, b) => Date.parse(a.task_order) - Date.parse(b.task_order));
+
+            display_time_left();
+
+            //sort_tasks(tasks);
+            document.addEventListener("load", display_tasks());
+            document.addEventListener("keydown", (event) => {
+                if (event.key == "Enter") {
+                    add_task();
+                    if (document.getElementById(CHANGE_DEADLINE_INPUT_ID) != null) {
+                        update_tasks();
+                    }
+                    if (document.getElementById(CHANGE_DEADLINE_DROPDOWN_ID) != null) {
+                        update_tasks_with_dropdown();
+                    }
+                }
+            });
+
+            deadlines_str = "\n";
+            
+            for (task of tasks) {
+                let minutes = task.duration % 60;
+                let hours = Math.floor(task.duration / 60);
+
+                deadlines_str += task.task_name;
+                deadlines_str += ",";
+
+                if (hours != 0) {
+                    deadlines_str += hours + "h";
+                    if (minutes != 0) {
+                        deadlines_str += " ";
+                    }
+                }
+
+                if (minutes != 0) {
+                    deadlines_str += minutes + "m";
+                }
+
+                deadlines_str += ",Work\n";
+            }
+            deadlines_str = deadlines_str.replace("-"," ")
+            console.log(deadlines_str);
+
+        </script> 
+    </body>
+</html>
